@@ -1738,7 +1738,7 @@ const getSub = async (request, url, uuid) => {
 export default {
     async fetch(request, env) {
         if (!isInitialized) initializeWasm(env);
-        if (request.method === 'POST' && request.headers.get('content-type') === 'application/grpc-web') return handleXwebPost(request);
+        if (request.method === 'POST' && request.headers.get('content-type')?.startsWith('application/grpc')) return handleXwebPost(request);
         if (request.headers.get('Upgrade') === 'websocket') {
             const {0: clientSocket, 1: webSocket} = new WebSocketPair();
             webSocket.accept({allowHalfOpen: true}), webSocket.binaryType = "arraybuffer";

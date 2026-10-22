@@ -39,7 +39,7 @@ const ssAeadPassword = '123456';       // ss协议 aes-128-gcm 密码（notls）
 // ---------------------------------------------------------------------------------
 /** 缓冲区最大大小。*/
 /**- **警告**: 大小为maxChunkLen的整数倍使用率最高，不然会有空间浪费。*/
-const bufferSize = 256 * 1024;         // 256KB
+const bufferSize = 512 * 1024;         // 512KB
 /** 开启限速缓存模式的大包流量阈值。*/
 const startThreshold = 50 * 1024 * 1024; //50MB
 /** 从TCP读取的数据块最大大小，改小会成倍增加传输相同流量的cpu开销，同时会因为写满而增加数据进入缓冲区限速的概率*/
@@ -1920,7 +1920,11 @@ const establishTcpConnection = async (parsedRequest, request) => {
                 } else if (parts.length) {
                     const parsedParams = parts.map(part => {
                         if (t === 4) return {nat64Auth: part, proxyAll};
-                        if (t === 1 || t === 2 || t === 5 || t === 6 || t === 7) return parseAuthString(part);
+                        if (t === 1) return parseAuthString(part, 1080);
+                        if (t === 2) return parseAuthString(part, 80);
+                        if (t === 6) return parseAuthString(part, 443);
+                        if (t === 5) return parseAuthString(part, 3478);
+                        if (t === 7) return parseAuthString(part, 5349);
                         if (t === 8) {
                             const auth = parseAuthString(part, 443);
                             return auth.username && auth.password ? auth : {...auth, username: 'vpn', password: 'vpn'};

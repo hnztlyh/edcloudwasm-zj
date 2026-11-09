@@ -12,7 +12,7 @@ const flushTime = 3;
 const concurrency = 4;
 const urlParamCacheLimit = 20;
 const proxyStrategyOrder = ['socks', 'http', 'https'];
-const aiProxyip = 'kr.william.us.ci';
+const aiProxyip = 'hkgai.58807.de5.net';
 const dohEndpoints = ['https://cloudflare-dns.com/dns-query', 'https://dns.google/dns-query'];
 const dohNatEndpoints = ['https://cloudflare-dns.com/dns-query', 'https://dns.google/resolve'];
 const getProxyHost = () => {
@@ -261,7 +261,7 @@ const txtdnsResult = async (txtdns) => {
     }
     return prefixes.length ? prefixes : null;
 };
-const proxyIpRegex = /william|fxpip|hhtxt/;
+const proxyIpRegex = /william|fxpip/;
 const connectProxyIp = async (param, limit, txt) => {
     if (param === undefined) param = await getCurrentColo() || proxyHost;
     if (txt || proxyIpRegex.test(param)) {
@@ -322,7 +322,7 @@ const concurrentStrategyExec = (parsedRequest, params, exec, limit, txt) => {
     return raceAny(attempts);
 };
 const paramRegex = /(speed|gs5|s5all|ghttp|httpall|ghttps|httpsall|s5|socks|http|https|txtip|ip)(?:=|:\/\/|%3A%2F%2F)([^&]+)|(proxyall|globalproxy|global)/gi;
-const urlListCacheDict = new Map(), urlListCacheKeys = new Array(urlParamCacheLimit);
+const urlListCacheDict = new Map(), urlListCacheKeys = new Array(urlParamCacheLimit), directFailTable = new Set();
 let urlListCacheIndex = 0;
 const establishTcpConnection = async (parsedRequest, request) => {
     let u = request.url, clean = u.slice(u.indexOf('/', 10) + 1), l = clean.length, list = [], speed;
@@ -398,14 +398,16 @@ const establishTcpConnection = async (parsedRequest, request) => {
             list = isHkgAi ? aiList : normalList;
         }
     }
-    for (let i = 0; i < list.length; i++) {
+    const skipDirect = list.length > 1 && (parsedRequest.isAiDomain || directFailTable.has(parsedRequest.host));
+    for (const {type, concurrent, param, txt} of list) {
+        if (type === 0 && skipDirect) continue;
         try {
-            const exec = strategyExecutorMap.get(list[i].type);
-            const sub = (list[i]['concurrent'] && Array.isArray(list[i].param)) ? Math.max(1, Math.floor(concurrency / list[i].param.length)) : undefined;
-            // @ts-ignore
-            const socket = await (list[i]['concurrent'] && Array.isArray(list[i].param) ? concurrentStrategyExec(parsedRequest, list[i].param, exec, sub, list[i].txt) : exec(parsedRequest, list[i].param, undefined, list[i].txt));
+            const exec = strategyExecutorMap.get(type);
+            const sub = (concurrent && Array.isArray(param)) ? Math.max(1, Math.floor(concurrency / (param.length || 1))) : undefined;
+            const socket = await (sub ? concurrentStrategyExec(parsedRequest, param, exec, sub, txt) : exec(parsedRequest, param, undefined, txt));
             if (socket) return {socket, speed};
         } catch {}
+        if (type === 0) (directFailTable.add(parsedRequest.host), directFailTable.size > 200 && directFailTable.delete(directFailTable.values().next().value));
     }
     return null;
 };
@@ -423,11 +425,10 @@ const manualPipe = async (readable, writable, close, speed) => {
     }
     const safeBufferSize = pipeBufferSize - maxChunkLen;
     let bufferView = new Uint8Array(pipeBufferSize), spareBuffer = new ArrayBuffer(maxChunkLen);
-    let offset = 0, totalBytes = 0, time = 0, timerId = null, delays = 0, resume = null, done, value;
+    let offset = 0, totalBytes = 0, time = 0, timerId = null, resume = null, done, value;
     const flushBuffer = () => {
         if (offset > 0) (writable.send(bufferView.subarray(0, offset)), offset = 0);
         timerId && (clearTimeout(timerId), timerId = null), resume?.(), resume = null;
-        delays = 0;
     };
     const reader = readable.getReader({mode: 'byob'});
     try {
@@ -444,28 +445,22 @@ const manualPipe = async (readable, writable, close, speed) => {
             offset += chunkLen, totalBytes += chunkLen;
             if (chunkLen < 4096) {
                 if (!speedLimit) totalBytes = 0;
-                time = 0;
-            } else {
-                delays = 0;
-                if (totalBytes > pipeStartThreshold) time = pipeFlushTime;
-            }
-            time === 0
-                ? (timerId ? (delays < 2 ? (clearTimeout(timerId), timerId = setTimeout(flushBuffer, 0), delays++) : flushBuffer()) : (timerId = setTimeout(flushBuffer, 0)))
-                : (timerId ||= setTimeout(flushBuffer, time));
+                time = 2;
+            } else if (totalBytes > pipeStartThreshold) time = pipeFlushTime;
+            timerId ||= setTimeout(flushBuffer, time);
             offset > safeBufferSize && (totalBytes > pipeStartThreshold ? await new Promise(r => resume = r) : flushBuffer());
         }
     } catch {offset = 0, close?.()} finally {flushBuffer()}
 };
 const createBufferedTcpWriter = (tcpWriter, close) => {
     const buffer = new Uint8Array(32768);
-    let offset = 0, timerId = null, delays = 0, closed = false;
+    let offset = 0, timerId = null, closed = false;
     const closeWriter = () => {
         if (closed) return;
         closed = true, timerId && (clearTimeout(timerId), timerId = null), close?.();
     };
     const flush = () => {
         timerId && (clearTimeout(timerId), timerId = null);
-        delays = 0;
         if (!offset || closed) return;
         const len = offset;
         offset = 0;
@@ -475,8 +470,7 @@ const createBufferedTcpWriter = (tcpWriter, close) => {
         if (closed) return;
         const data = chunk.constructor === Uint8Array ? chunk : new Uint8Array(chunk), len = data.byteLength;
         if (!len) return;
-        offset + len > 32768 && flush(), buffer.set(data, offset), offset += len;
-        offset === 32768 ? flush() : (timerId ? (delays < 2 ? (clearTimeout(timerId), timerId = setTimeout(flush, 0), delays++) : flush()) : (timerId = setTimeout(flush, 0)));
+        offset + len > 32768 && flush(), buffer.set(data, offset), offset += len, offset === 32768 ? flush() : (timerId ||= setTimeout(flush, 1));
     };
 };
 const createAsyncMicrotaskQueue = (consume, close) => {
@@ -556,11 +550,10 @@ const handleXwebPost = async (request) => {
     const close = () => {if (state.xwebPipeTo) state.xwebPipeTo = false, reader.cancel().catch(() => {}), responseWriter.close().catch(() => {})};
     const writable = {send(chunk) {if (chunk?.byteLength) return responseWriter.write(chunk)}};
     (async () => {
-        let bufferView = new Uint8Array(32768), spareBuffer = new ArrayBuffer(8192), used = 0, uploaded = 0, timerId = null, delays = 0, done, value;
+        let bufferView = new Uint8Array(32768), spareBuffer = new ArrayBuffer(8192), used = 0, uploaded = 0, timerId = null, done, value;
         const flush = () => {
             if (used > 0 && state.tcpWriter && bufferView) (state.tcpWriter(bufferView.subarray(0, used)), used = 0);
             timerId && (clearTimeout(timerId), timerId = null);
-            delays = 0;
         };
         try {
             while (true) {
@@ -583,7 +576,7 @@ const handleXwebPost = async (request) => {
                         request.body.pipeThrough(upBridge).pipeTo(state.tcpSocket.writable);
                         break;
                     }
-                    used > 24576 ? flush() : (timerId ? (delays < 2 ? (clearTimeout(timerId), timerId = setTimeout(flush, 0), delays++) : flush()) : (timerId = setTimeout(flush, 0)));
+                    used > 24576 ? flush() : (timerId ||= setTimeout(flush, 1));
                 } else {
                     state.needMore = false;
                     await handleSession(bufferView.subarray(0, used), state, request, writable, close);
@@ -609,6 +602,6 @@ export default {
             handleWebSocketConn(webSocket, request);
             return new Response(null, {status: 101, webSocket: clientSocket});
         }
-        return fetch('https://1345695.github.io/index-404-html/');
+        return new Response(null, {status: 404});
     }
 };
